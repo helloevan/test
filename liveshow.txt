@@ -1,0 +1,90 @@
+with danmu_raw_data as ( 
+    select dt,hour,pcode,uid,'liveshow' as cate1_match_dm,count(distinct sender) as com_ucnt,
+        max(minute)-min(minute) as monitor_mins
+    from (
+        select dt,hour,minute,pcode,sender,uid
+    	from gamelive.gamelive_yy_webzb_original
+    	where dt>='2020-11-01' and dt<'2021-03-01'
+    	and pcode in ('nonolive','twitch','nimo')
+    	and uid is not null
+    	and (sptags not in ('dypl','wzry','huya?urlType=monitor','lrs','huya-lrs','panda-dypl','panda-lrs') or sptags is NULL)
+    	and msg not in ('enter_room','became a fan, Won''t miss next LIVE','hayran oldu, Sonraki LIVE kaçırmayacak','Trở thành fan,không lỡ live lần sau','ya es seguidor, no perderá el siguiente stream.','menjadi penggemar, tidak akan melewatkan LIVE berikutnya','crawler_enter','enter room') --剔除欢迎观众进场的系统弹幕
+    	and (ext['status'] = '1' or ext['status'] is null) --开播状态
+    	and msgtype not in ('-1','1') --忽略心跳和礼物弹幕
+    	group by dt,hour,minute,pcode,sender,uid
+    ) a
+    group by dt,hour,pcode,uid
+),
+
+
+danmu as (
+    select substr(dt,1,7) ym,pcode,uid,sum(com_ucnt) as com_ucnt,sum(monitor_mins) as monitor_mins,
+        round(cast(sum(com_ucnt) as double)/sum(monitor_mins),2) as com_ucnt_avg,count(distinct dt) dts
+    from danmu_raw_data
+    group by substr(dt,1,7),pcode,uid
+)
+
+
+select t2.*,t3.*,t4.area
+from (
+    select substr(dt,1,7) ym,pcode,uid,max(r_owner) r_owner,avg(acu) acu,sum(hours) hours,count(distinct dt) dts
+    from (
+        select dt,pcode,uid,max(r_owner) r_owner,avg(online) acu,count(uid)*0.5 hours
+        from gamelive.platform_live_list
+        where dt>='2020-11-01' and dt<'2021-03-01'
+        and pcode in ('nonolive','twitch','nimo')
+        and r_category in ('星秀',
+                            'Lifestyle',
+                            'NimoShow',
+                            'Twitch Sings',
+                            'liveshow',
+                            'Live Show',
+                            'HOHOL',
+                            'Show Time',
+                            'Show&Sohbet!',
+                            'Прямая трансляция',
+                            'Liveshow',
+                            'Life Style',
+                            'The Nimo Show'
+                            )
+        group by dt,pcode,uid
+    ) t1
+    group by substr(dt,1,7),pcode,uid
+) t2
+left join danmu t3
+on t2.ym=t3.ym and t2.pcode=t3.pcode and t2.uid=t3.uid
+left join (
+    select pcode,uid,order_first_row('desc',cnt,localdomain).f1 localdomain
+    from (
+        select pcode,uid,localdomain,count(uid) cnt
+        from gamelive.platform_live_list
+        where dt>='2020-11-01' and dt<'2021-03-01'
+        and pcode in ('nonolive','twitch','nimo')
+        and r_category in ('星秀',
+                            'Lifestyle',
+                            'NimoShow',
+                            'Twitch Sings',
+                            'liveshow',
+                            'Live Show',
+                            'HOHOL',
+                            'Show Time',
+                            'Show&Sohbet!',
+                            'Прямая трансляция',
+                            'Liveshow',
+                            'Life Style',
+                            'The Nimo Show'
+                            )
+        group by pcode,uid,localdomain
+    ) a
+    group by pcode,uid
+) t4
+on t2.pcode=t4.pcode and t2.uid=t4.uid
+left join (
+    select localdomain,country_memo as area
+    from gamelive.dim_jingpin_foreign_country
+    where country_memo<>''
+    and pcode in ('nonolive','twitch','nimo')
+    group by localdomain,country_memo
+) t5
+on t4.localdomain=t5.localdomain
+where t3.uid is not null
